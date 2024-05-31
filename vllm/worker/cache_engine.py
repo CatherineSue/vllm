@@ -1,5 +1,5 @@
 """CacheEngine class for managing the KV cache."""
-from typing import Dict, List
+from typing import List
 
 import torch
 
@@ -67,23 +67,22 @@ class CacheEngine:
                             device=device))
         return kv_cache
 
-    def swap_in(self, src_to_dst: Dict[int, int]) -> None:
+    def swap_in(self, src_to_dst: torch.Tensor) -> None:
         for i in range(self.num_layers):
             self.attn_backend.swap_blocks(self.cpu_cache[i], self.gpu_cache[i],
                                           src_to_dst)
 
-    def swap_out(self, src_to_dst: Dict[int, int]) -> None:
+    def swap_out(self, src_to_dst: torch.Tensor) -> None:
         for i in range(self.num_layers):
             self.attn_backend.swap_blocks(self.gpu_cache[i], self.cpu_cache[i],
                                           src_to_dst)
 
-    def copy(self, src_to_dsts: Dict[int, List[int]]) -> None:
+    def copy(self, src_to_dsts: torch.Tensor) -> None:
         self.attn_backend.copy_blocks(self.gpu_cache, src_to_dsts)
 
     @staticmethod
     def get_cache_block_size(
-        block_size: int,
-        cache_dtype: str,
+        cache_config: CacheConfig,
         model_config: ModelConfig,
         parallel_config: ParallelConfig,
     ) -> int:
@@ -91,13 +90,13 @@ class CacheEngine:
         num_heads = model_config.get_num_kv_heads(parallel_config)
         num_layers = model_config.get_num_layers(parallel_config)
 
-        key_cache_block = block_size * num_heads * head_size
+        key_cache_block = cache_config.block_size * num_heads * head_size
         value_cache_block = key_cache_block
         total = num_layers * (key_cache_block + value_cache_block)
-        if cache_dtype == "auto":
+        if cache_config.cache_dtype == "auto":
             dtype = model_config.dtype
         else:
-            dtype = STR_DTYPE_TO_TORCH_DTYPE[cache_dtype]
+            dtype = STR_DTYPE_TO_TORCH_DTYPE[cache_config.cache_dtype]
         dtype_size = _get_dtype_size(dtype)
         return dtype_size * total
 

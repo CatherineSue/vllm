@@ -1,14 +1,18 @@
+import contextlib
+import gc
 import os
 from typing import List, Optional, Tuple
 
 import pytest
 import torch
 from PIL import Image
+from sentence_transformers import SentenceTransformer
 from transformers import (AutoModelForCausalLM, AutoProcessor,
                           LlavaForConditionalGeneration)
 
 from vllm import LLM, SamplingParams
 from vllm.config import TokenizerPoolConfig, VisionLanguageConfig
+from vllm.distributed import destroy_model_parallel
 from vllm.sequence import MultiModalData
 from vllm.transformers_utils.tokenizer import get_tokenizer
 
@@ -41,6 +45,34 @@ def _read_prompts(filename: str) -> List[str]:
     with open(filename, "r") as f:
         prompts = f.readlines()
         return prompts
+
+
+def cleanup():
+    destroy_model_parallel()
+    with contextlib.suppress(AssertionError):
+        torch.distributed.destroy_process_group()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+
+@pytest.fixture()
+def should_do_global_cleanup_after_test(request) -> bool:
+    """Allow subdirectories to skip global cleanup by overriding this fixture.
+    This can provide a ~10x speedup for non-GPU unit tests since they don't need
+    to initialize torch.
+    """
+
+    if request.node.get_closest_marker("skip_global_cleanup"):
+        return False
+
+    return True
+
+
+@pytest.fixture(autouse=True)
+def cleanup_fixture(should_do_global_cleanup_after_test: bool):
+    yield
+    if should_do_global_cleanup_after_test:
+        cleanup()
 
 
 @pytest.fixture(scope="session")
@@ -102,6 +134,10 @@ _VISION_LANGUAGE_MODELS = {
     "llava-hf/llava-1.5-7b-hf": LlavaForConditionalGeneration,
 }
 
+_EMBEDDING_MODELS = [
+    "intfloat/e5-mistral-7b-instruct",
+]
+
 
 class HfRunner:
 
@@ -114,14 +150,7 @@ class HfRunner:
         assert dtype in _STR_DTYPE_TO_TORCH_DTYPE
         torch_dtype = _STR_DTYPE_TO_TORCH_DTYPE[dtype]
         self.model_name = model_name
-        if model_name not in _VISION_LANGUAGE_MODELS:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch_dtype,
-                trust_remote_code=True,
-            ).cuda()
-            self.processor = None
-        else:
+        if model_name in _VISION_LANGUAGE_MODELS:
             self.model = _VISION_LANGUAGE_MODELS[model_name].from_pretrained(
                 model_name,
                 torch_dtype=torch_dtype,
@@ -131,6 +160,18 @@ class HfRunner:
                 model_name,
                 torch_dtype=torch_dtype,
             )
+        elif model_name in _EMBEDDING_MODELS:
+            self.model = SentenceTransformer(
+                model_name,
+                device="cpu",
+            ).to(dtype=torch_dtype).cuda()
+        else:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch_dtype,
+                trust_remote_code=True,
+            ).cuda()
+            self.processor = None
         if tokenizer_name is None:
             tokenizer_name = model_name
         self.tokenizer = get_tokenizer(tokenizer_name, trust_remote_code=True)
@@ -241,6 +282,75 @@ class HfRunner:
             all_logprobs.append(seq_logprobs)
         return all_logprobs
 
+    def generate_greedy_logprobs_limit(
+        self,
+        prompts: List[str],
+        max_tokens: int,
+        num_logprobs: int,
+    ) -> List[Tuple[List[int], str]]:
+        all_logprobs = []
+        all_output_ids = []
+        all_output_strs = []
+
+        for prompt in prompts:
+            input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids
+            output = self.model.generate(
+                input_ids.cuda(),
+                use_cache=True,
+                do_sample=False,
+                max_new_tokens=max_tokens,
+                output_hidden_states=True,
+                return_dict_in_generate=True,
+            )
+
+            seq_logprobs = []
+            for _, hidden_states in enumerate(output.hidden_states):
+                last_hidden_states = hidden_states[-1][0]
+                logits = torch.matmul(
+                    last_hidden_states,
+                    self.model.get_output_embeddings().weight.t(),
+                )
+                if getattr(self.model.get_output_embeddings(), "bias",
+                           None) is not None:
+                    logits += self.model.get_output_embeddings(
+                    ).bias.unsqueeze(0)
+                logprobs = torch.nn.functional.log_softmax(logits,
+                                                           dim=-1,
+                                                           dtype=torch.float32)
+                seq_logprobs.append(logprobs)
+
+            # convert to dict
+            seq_logprobs_lst = []
+            for tok_idx, tok_logprobs in enumerate(seq_logprobs):
+                # drop prompt logprobs
+                if tok_idx == 0:
+                    tok_logprobs = tok_logprobs[-1, :].reshape(1, -1)
+                topk = tok_logprobs.topk(num_logprobs)
+
+                tok_logprobs_dct = {}
+                for token_id, logprob in zip(topk.indices[0], topk.values[0]):
+                    tok_logprobs_dct[token_id.item()] = logprob.item()
+
+                seq_logprobs_lst.append(tok_logprobs_dct)
+
+            all_logprobs.append(seq_logprobs_lst)
+            seq_ids = output.sequences[0]
+            output_len = seq_ids.shape[0] - input_ids.shape[1]
+            output_ids = seq_ids[-output_len:]
+            all_output_ids.append(output_ids.tolist())
+            all_output_strs.append(self.tokenizer.decode(output_ids))
+
+        outputs = zip(all_output_ids, all_output_strs, all_logprobs)
+        return [(output_ids, output_str, output_logprobs)
+                for output_ids, output_str, output_logprobs in outputs]
+
+    def encode(self, prompts: List[str]) -> List[List[torch.Tensor]]:
+        return self.model.encode(prompts)
+
+    def __del__(self):
+        del self.model
+        cleanup()
+
 
 @pytest.fixture
 def hf_runner():
@@ -253,9 +363,15 @@ class VllmRunner:
         self,
         model_name: str,
         tokenizer_name: Optional[str] = None,
+        # Use smaller max model length, otherwise bigger model cannot run due
+        # to kv cache size limit.
+        max_model_len=1024,
         dtype: str = "half",
         disable_log_stats: bool = True,
         tensor_parallel_size: int = 1,
+        block_size: int = 16,
+        enable_chunked_prefill: bool = False,
+        swap_space=4,
         **kwargs,
     ) -> None:
         self.model = LLM(
@@ -263,9 +379,12 @@ class VllmRunner:
             tokenizer=tokenizer_name,
             trust_remote_code=True,
             dtype=dtype,
-            swap_space=0,
+            swap_space=swap_space,
             disable_log_stats=disable_log_stats,
             tensor_parallel_size=tensor_parallel_size,
+            max_model_len=max_model_len,
+            block_size=block_size,
+            enable_chunked_prefill=enable_chunked_prefill,
             **kwargs,
         )
 
@@ -353,8 +472,20 @@ class VllmRunner:
         outputs = self.generate(prompts, beam_search_params)
         return outputs
 
+    def encode(self, prompts: List[str]) -> List[List[float]]:
+        req_outputs = self.model.encode(prompts)
+        outputs = []
+        for req_output in req_outputs:
+            embedding = req_output.outputs.embedding
+            outputs.append(embedding)
+        return outputs
 
-@pytest.fixture
+    def __del__(self):
+        del self.model
+        cleanup()
+
+
+@pytest.fixture(scope="session")
 def vllm_runner():
     return VllmRunner
 
