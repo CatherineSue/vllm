@@ -1,11 +1,11 @@
 syntax = "proto3";
 
-package vllm.grpc.scheduler;
+package vllm.grpc.engine;
 
-// Service definition for vLLM scheduler communication
+// Service definition for vLLM engine communication
 // This protocol is designed for efficient binary communication between
-// the Rust router and vLLM Python scheduler.
-service VllmScheduler {
+// the Rust router and vLLM Python engine (AsyncLLM).
+service VllmEngine {
   // Submit a generation request (supports streaming)
   rpc Generate(GenerateRequest) returns (stream GenerateResponse);
 
@@ -39,8 +39,8 @@ message SamplingParams {
   float presence_penalty = 6;
   float repetition_penalty = 7;
 
-  optional int32 max_new_tokens = 8;
-  int32 min_new_tokens = 9;
+  optional int32 max_tokens = 8;
+  int32 min_tokens = 9;
 
   repeated string stop = 10;
   repeated uint32 stop_token_ids = 11;
@@ -51,11 +51,30 @@ message SamplingParams {
 
   int32 n = 15;  // Number of parallel samples
 
-  // Structured generation (one of)
+  // Logprobs configuration
+  optional int32 logprobs = 22;  // Number of log probabilities per output token (-1 for all)
+  optional int32 prompt_logprobs = 23;  // Number of log probabilities per prompt token (-1 for all)
+
+  // Additional vLLM fields
+  optional int32 seed = 24;  // Random seed for reproducibility
+  bool include_stop_str_in_output = 25;  // Whether to include stop strings in output
+  map<int32, float> logit_bias = 26;  // Token ID to bias mapping (-100 to 100)
+  optional int32 truncate_prompt_tokens = 27;  // Prompt truncation (-1 for model max)
+
+  // Structured outputs (one of) - matches vLLM's StructuredOutputsParams
   oneof constraint {
-    string regex = 16;
-    string json_schema = 17;
+    string json_schema = 16;  // JSON schema for structured output
+    string regex = 17;  // Regex pattern
+    string grammar = 18;  // Grammar/EBNF for structured output
+    string structural_tag = 19;  // Structural tag (e.g., Harmony models)
+    bool json_object = 20;  // Force JSON object output
+    ChoiceConstraint choice = 21;  // List of allowed choices
   }
+}
+
+// Choice constraint for structured outputs
+message ChoiceConstraint {
+  repeated string choices = 1;
 }
 
 // Pre-tokenized input from Rust router
@@ -74,16 +93,11 @@ message GenerateRequest {
   // Pre-tokenized input (required)
   TokenizedInput tokenized = 2;
 
-  // Generation parameters
+  // Generation parameters (includes logprobs config)
   SamplingParams sampling_params = 3;
 
-  // Logprob options
-  bool return_logprob = 4;
-  int32 logprob_start_len = 5;
-  int32 top_logprobs_num = 6;
-
   // Streaming
-  bool stream = 7;
+  bool stream = 4;
 }
 
 // =====================

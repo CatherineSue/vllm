@@ -5,7 +5,7 @@
 Compile vLLM protobuf definitions into Python code.
 
 This script uses grpcio-tools to generate *_pb2.py and *_pb2_grpc.py files
-from the vllm_scheduler.proto definition.
+from the vllm_engine.proto definition.
 
 Usage:
     python vllm/grpc/compile_protos.py
@@ -24,7 +24,7 @@ def compile_protos():
     script_dir = Path(__file__).parent
     vllm_package_root = script_dir.parent.parent  # vllm/vllm/grpc -> vllm/
 
-    proto_file = script_dir / "vllm_scheduler.proto"
+    proto_file = script_dir / "vllm_engine.proto"
 
     if not proto_file.exists():
         print(f"Error: Proto file not found at {proto_file}")
@@ -34,7 +34,7 @@ def compile_protos():
     print(f"Output directory: {script_dir}")
 
     # Compile the proto file
-    # We use vllm/vllm as the proto_path so that the package is vllm.grpc.scheduler
+    # We use vllm/vllm as the proto_path so that the package is vllm.grpc.engine
     try:
         from grpc_tools import protoc
 
@@ -44,14 +44,29 @@ def compile_protos():
                 f"--proto_path={vllm_package_root}",
                 f"--python_out={vllm_package_root}",
                 f"--grpc_python_out={vllm_package_root}",
-                str(script_dir / "vllm_scheduler.proto"),
+                str(script_dir / "vllm_engine.proto"),
             ]
         )
 
         if result == 0:
+            # Add SPDX headers to generated files
+            spdx_header = (
+                "# SPDX-License-Identifier: Apache-2.0\n"
+                "# SPDX-FileCopyrightText: Copyright contributors to the vLLM project\n"
+            )
+
+            for generated_file in [
+                script_dir / "vllm_engine_pb2.py",
+                script_dir / "vllm_engine_pb2_grpc.py",
+            ]:
+                if generated_file.exists():
+                    content = generated_file.read_text()
+                    if not content.startswith("# SPDX-License-Identifier"):
+                        generated_file.write_text(spdx_header + content)
+
             print("✓ Protobuf compilation successful!")
-            print(f"  Generated: {script_dir / 'vllm_scheduler_pb2.py'}")
-            print(f"  Generated: {script_dir / 'vllm_scheduler_pb2_grpc.py'}")
+            print(f"  Generated: {script_dir / 'vllm_engine_pb2.py'}")
+            print(f"  Generated: {script_dir / 'vllm_engine_pb2_grpc.py'}")
             return 0
         else:
             print(f"Error: protoc returned {result}")

@@ -4,7 +4,7 @@
 """
 vLLM gRPC Server
 
-Starts a gRPC server for vLLM using the VllmScheduler protocol.
+Starts a gRPC server for vLLM using the VllmEngine protocol.
 
 Usage:
     python -m vllm.entrypoints.grpc_server --model <model_path>
@@ -26,7 +26,7 @@ from collections.abc import AsyncGenerator
 import grpc
 
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.grpc import vllm_scheduler_pb2, vllm_scheduler_pb2_grpc
+from vllm.grpc import vllm_engine_pb2, vllm_engine_pb2_grpc
 from vllm.grpc.grpc_request_manager import (
     GrpcRequestManager,
     create_sampling_params_from_proto,
@@ -38,9 +38,9 @@ from vllm.v1.engine.async_llm import AsyncLLM
 logger = init_logger(__name__)
 
 
-class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
+class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
     """
-    gRPC servicer implementing the VllmScheduler service.
+    gRPC servicer implementing the VllmEngine service.
 
     Handles 6 RPCs:
     - Generate: Streaming text generation
@@ -59,13 +59,13 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
             request_manager: The GrpcRequestManager instance
         """
         self.request_manager = request_manager
-        logger.info("VllmSchedulerServicer initialized")
+        logger.info("VllmEngineServicer initialized")
 
     async def Generate(
         self,
-        request: vllm_scheduler_pb2.GenerateRequest,
+        request: vllm_engine_pb2.GenerateRequest,
         context: grpc.aio.ServicerContext,
-    ) -> AsyncGenerator[vllm_scheduler_pb2.GenerateResponse, None]:
+    ) -> AsyncGenerator[vllm_engine_pb2.GenerateResponse, None]:
         """
         Handle streaming generation requests.
 
@@ -130,9 +130,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
     async def Embed(
         self,
-        request: vllm_scheduler_pb2.EmbedRequest,
+        request: vllm_engine_pb2.EmbedRequest,
         context: grpc.aio.ServicerContext,
-    ) -> vllm_scheduler_pb2.EmbedResponse:
+    ) -> vllm_engine_pb2.EmbedResponse:
         """
         Handle embedding requests.
 
@@ -146,9 +146,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
             EmbedResponse protobuf
         """
         logger.warning("Embed RPC not yet implemented")
-        return vllm_scheduler_pb2.EmbedResponse(
+        return vllm_engine_pb2.EmbedResponse(
             request_id=request.request_id,
-            error=vllm_scheduler_pb2.EmbedError(
+            error=vllm_engine_pb2.EmbedError(
                 message="Embed RPC not yet implemented",
                 code="NOT_IMPLEMENTED",
             ),
@@ -156,9 +156,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
     async def HealthCheck(
         self,
-        request: vllm_scheduler_pb2.HealthCheckRequest,
+        request: vllm_engine_pb2.HealthCheckRequest,
         context: grpc.aio.ServicerContext,
-    ) -> vllm_scheduler_pb2.HealthCheckResponse:
+    ) -> vllm_engine_pb2.HealthCheckResponse:
         """
         Handle health check requests.
 
@@ -171,16 +171,16 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         """
         is_healthy, message = await self.request_manager.health_check()
 
-        return vllm_scheduler_pb2.HealthCheckResponse(
+        return vllm_engine_pb2.HealthCheckResponse(
             healthy=is_healthy,
             message=message,
         )
 
     async def Abort(
         self,
-        request: vllm_scheduler_pb2.AbortRequest,
+        request: vllm_engine_pb2.AbortRequest,
         context: grpc.aio.ServicerContext,
-    ) -> vllm_scheduler_pb2.AbortResponse:
+    ) -> vllm_engine_pb2.AbortResponse:
         """
         Handle abort requests.
 
@@ -196,16 +196,16 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
         success = await self.request_manager.abort(request_id)
 
-        return vllm_scheduler_pb2.AbortResponse(
+        return vllm_engine_pb2.AbortResponse(
             success=success,
             message=f"Request {request_id} {'aborted' if success else 'not found'}",
         )
 
     async def GetModelInfo(
         self,
-        request: vllm_scheduler_pb2.GetModelInfoRequest,
+        request: vllm_engine_pb2.GetModelInfoRequest,
         context: grpc.aio.ServicerContext,
-    ) -> vllm_scheduler_pb2.GetModelInfoResponse:
+    ) -> vllm_engine_pb2.GetModelInfoResponse:
         """
         Handle model info requests.
 
@@ -218,7 +218,7 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         """
         model_config = self.request_manager.get_model_config()
 
-        return vllm_scheduler_pb2.GetModelInfoResponse(
+        return vllm_engine_pb2.GetModelInfoResponse(
             model_path=model_config.get("model_path", ""),
             is_generation=model_config.get("is_generation", True),
             max_context_length=model_config.get("max_context_length", 0),
@@ -228,9 +228,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
     async def GetServerInfo(
         self,
-        request: vllm_scheduler_pb2.GetServerInfoRequest,
+        request: vllm_engine_pb2.GetServerInfoRequest,
         context: grpc.aio.ServicerContext,
-    ) -> vllm_scheduler_pb2.GetServerInfoResponse:
+    ) -> vllm_engine_pb2.GetServerInfoResponse:
         """
         Handle server info requests.
 
@@ -243,7 +243,7 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         """
         num_requests = self.request_manager.get_num_unfinished_requests()
 
-        return vllm_scheduler_pb2.GetServerInfoResponse(
+        return vllm_engine_pb2.GetServerInfoResponse(
             active_requests=num_requests,
             is_paused=False,
             last_receive_timestamp=time.time(),
@@ -257,7 +257,7 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         self,
         request_id: str,
         output,
-    ) -> vllm_scheduler_pb2.GenerateResponse:
+    ) -> vllm_engine_pb2.GenerateResponse:
         """
         Build a streaming chunk response from vLLM output.
 
@@ -273,9 +273,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
         if completion is None:
             # Empty chunk
-            return vllm_scheduler_pb2.GenerateResponse(
+            return vllm_engine_pb2.GenerateResponse(
                 request_id=request_id,
-                chunk=vllm_scheduler_pb2.GenerateStreamChunk(
+                chunk=vllm_engine_pb2.GenerateStreamChunk(
                     token_ids=[],
                     prompt_tokens=0,
                     completion_tokens=0,
@@ -284,9 +284,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
             )
 
         # Build chunk with token IDs (no text!)
-        return vllm_scheduler_pb2.GenerateResponse(
+        return vllm_engine_pb2.GenerateResponse(
             request_id=request_id,
-            chunk=vllm_scheduler_pb2.GenerateStreamChunk(
+            chunk=vllm_engine_pb2.GenerateStreamChunk(
                 token_ids=completion.token_ids,
                 prompt_tokens=len(output.prompt_token_ids)
                 if output.prompt_token_ids
@@ -300,7 +300,7 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         self,
         request_id: str,
         output,
-    ) -> vllm_scheduler_pb2.GenerateResponse:
+    ) -> vllm_engine_pb2.GenerateResponse:
         """
         Build a final completion response from vLLM output.
 
@@ -316,9 +316,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
 
         if completion is None:
             # Empty completion
-            return vllm_scheduler_pb2.GenerateResponse(
+            return vllm_engine_pb2.GenerateResponse(
                 request_id=request_id,
-                complete=vllm_scheduler_pb2.GenerateComplete(
+                complete=vllm_engine_pb2.GenerateComplete(
                     output_ids=[],
                     finish_reason="error",
                     prompt_tokens=0,
@@ -328,9 +328,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
             )
 
         # Build complete response with all token IDs
-        return vllm_scheduler_pb2.GenerateResponse(
+        return vllm_engine_pb2.GenerateResponse(
             request_id=request_id,
-            complete=vllm_scheduler_pb2.GenerateComplete(
+            complete=vllm_engine_pb2.GenerateComplete(
                 output_ids=completion.token_ids,
                 finish_reason=completion.finish_reason or "stop",
                 prompt_tokens=len(output.prompt_token_ids)
@@ -346,7 +346,7 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         request_id: str,
         message: str,
         status_code: str,
-    ) -> vllm_scheduler_pb2.GenerateResponse:
+    ) -> vllm_engine_pb2.GenerateResponse:
         """
         Build an error response.
 
@@ -358,9 +358,9 @@ class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
         Returns:
             GenerateResponse with error field set
         """
-        return vllm_scheduler_pb2.GenerateResponse(
+        return vllm_engine_pb2.GenerateResponse(
             request_id=request_id,
-            error=vllm_scheduler_pb2.GenerateError(
+            error=vllm_engine_pb2.GenerateError(
                 message=message,
                 http_status_code=status_code,
                 details="",
@@ -400,7 +400,7 @@ async def serve_grpc(args: argparse.Namespace):
     request_manager = GrpcRequestManager(async_llm)
 
     # Create servicer
-    servicer = VllmSchedulerServicer(request_manager)
+    servicer = VllmEngineServicer(request_manager)
 
     # Create gRPC server
     server = grpc.aio.server(
@@ -415,7 +415,7 @@ async def serve_grpc(args: argparse.Namespace):
     )
 
     # Add servicer to server
-    vllm_scheduler_pb2_grpc.add_VllmSchedulerServicer_to_server(servicer, server)
+    vllm_engine_pb2_grpc.add_VllmEngineServicer_to_server(servicer, server)
 
     # Bind to address
     address = f"{args.host}:{args.port}"

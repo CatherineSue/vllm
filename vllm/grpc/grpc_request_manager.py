@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
-from vllm.sampling_params import SamplingParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.v1.engine import EngineCoreRequest
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.output_processor import RequestOutputCollector
@@ -220,13 +220,41 @@ def create_sampling_params_from_proto(
         stream: Whether streaming is enabled
 
     Returns:
-        vLLM SamplingParams with detokenize=False
+        vLLM SamplingParams with detokenize=False and structured_outputs
     """
     # Build stop sequences
     stop = list(proto_params.stop) if proto_params.stop else None
     stop_token_ids = (
         list(proto_params.stop_token_ids) if proto_params.stop_token_ids else None
     )
+
+    # Handle structured outputs constraints
+    structured_outputs = None
+    constraint_field = proto_params.WhichOneof("constraint")
+    if constraint_field:
+        if constraint_field == "json_schema":
+            structured_outputs = StructuredOutputsParams(json=proto_params.json_schema)
+        elif constraint_field == "regex":
+            structured_outputs = StructuredOutputsParams(regex=proto_params.regex)
+        elif constraint_field == "grammar":
+            structured_outputs = StructuredOutputsParams(grammar=proto_params.grammar)
+        elif constraint_field == "structural_tag":
+            structured_outputs = StructuredOutputsParams(
+                structural_tag=proto_params.structural_tag
+            )
+        elif constraint_field == "json_object":
+            structured_outputs = StructuredOutputsParams(
+                json_object=proto_params.json_object
+            )
+        elif constraint_field == "choice":
+            structured_outputs = StructuredOutputsParams(
+                choice=list(proto_params.choice.choices)
+            )
+
+    # Handle logit_bias
+    logit_bias = None
+    if proto_params.logit_bias:
+        logit_bias = dict(proto_params.logit_bias)
 
     # Create SamplingParams with detokenize=False
     # This is the KEY optimization that skips detokenization!
@@ -240,17 +268,26 @@ def create_sampling_params_from_proto(
         repetition_penalty=proto_params.repetition_penalty
         if proto_params.repetition_penalty > 0
         else 1.0,
-        max_tokens=proto_params.max_new_tokens
-        if proto_params.HasField("max_new_tokens")
+        max_tokens=proto_params.max_tokens
+        if proto_params.HasField("max_tokens")
         else 16,
-        min_tokens=proto_params.min_new_tokens
-        if proto_params.min_new_tokens > 0
-        else 0,
+        min_tokens=proto_params.min_tokens if proto_params.min_tokens > 0 else 0,
         stop=stop,
         stop_token_ids=stop_token_ids,
         skip_special_tokens=proto_params.skip_special_tokens,
         spaces_between_special_tokens=proto_params.spaces_between_special_tokens,
         ignore_eos=proto_params.ignore_eos,
         n=proto_params.n if proto_params.n > 0 else 1,
+        logprobs=proto_params.logprobs if proto_params.HasField("logprobs") else None,
+        prompt_logprobs=proto_params.prompt_logprobs
+        if proto_params.HasField("prompt_logprobs")
+        else None,
+        seed=proto_params.seed if proto_params.HasField("seed") else None,
+        include_stop_str_in_output=proto_params.include_stop_str_in_output,
+        logit_bias=logit_bias,
+        truncate_prompt_tokens=proto_params.truncate_prompt_tokens
+        if proto_params.HasField("truncate_prompt_tokens")
+        else None,
+        structured_outputs=structured_outputs,
         detokenize=False,  # ← KEY OPTIMIZATION: Skip detokenization!
     )
