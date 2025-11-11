@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """
 Compile vLLM protobuf definitions into Python code.
 
@@ -12,8 +14,6 @@ Requirements:
     pip install grpcio-tools
 """
 
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -38,13 +38,15 @@ def compile_protos():
     try:
         from grpc_tools import protoc
 
-        result = protoc.main([
-            'grpc_tools.protoc',
-            f'--proto_path={vllm_package_root}',
-            f'--python_out={vllm_package_root}',
-            f'--grpc_python_out={vllm_package_root}',
-            str(script_dir / 'vllm_scheduler.proto'),
-        ])
+        result = protoc.main(
+            [
+                "grpc_tools.protoc",
+                f"--proto_path={vllm_package_root}",
+                f"--python_out={vllm_package_root}",
+                f"--grpc_python_out={vllm_package_root}",
+                str(script_dir / "vllm_scheduler.proto"),
+            ]
+        )
 
         if result == 0:
             print("✓ Protobuf compilation successful!")
