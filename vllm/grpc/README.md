@@ -13,11 +13,16 @@ The vLLM gRPC protocol enables efficient binary communication between the Rust r
 
 ## Files
 
+**Protocol & Codegen:**
 - `vllm_scheduler.proto` - Protocol buffer definition (source)
 - `vllm_scheduler_pb2.py` - Generated protobuf messages (auto-generated)
 - `vllm_scheduler_pb2_grpc.py` - Generated gRPC service (auto-generated)
 - `compile_protos.py` - Script to compile proto files
 - `__init__.py` - Module initialization
+
+**Server Implementation:**
+- `grpc_request_manager.py` - Request manager (GrpcRequestManager class)
+- `../entrypoints/grpc_server.py` - Server entrypoint (VllmSchedulerServicer + main)
 
 ## Compilation
 
@@ -100,74 +105,61 @@ This leverages vLLM's existing infrastructure:
 
 ## Server Implementation
 
-The vLLM gRPC server consists of three main components:
+The vLLM gRPC server consists of **two simple components**:
 
-### 1. VllmRequestManager (`vllm/entrypoints/vllm_request_manager.py`)
+### 1. GrpcRequestManager (`vllm/grpc/grpc_request_manager.py`)
 
 Manages request lifecycle and converts between protobuf and vLLM types:
 
 ```python
-class VllmRequestManager:
+class GrpcRequestManager:
     def __init__(self, async_llm: AsyncLLM):
         self.async_llm = async_llm
         self.rid_to_collector: Dict[str, RequestOutputCollector] = {}
 
-    async def generate_request(self, obj: TokenizedGenerateReqInput, ...):
+    async def generate(self, request_id, prompt_token_ids, sampling_params, ...):
         # Build EngineCoreRequest with pre-tokenized input
-        # Set detokenize=False in SamplingParams ← KEY!
         # Submit to AsyncLLM
-        # Stream outputs as token IDs
+        # Stream outputs as token IDs (no timeout needed - uses asyncio.Event)
 ```
 
 **Key responsibilities:**
-- Convert protobuf `GenerateRequest` → vLLM `EngineCoreRequest`
-- Set `detokenize=False` in all `SamplingParams`
+- Convert protobuf types → vLLM types
+- Set `detokenize=False` in all `SamplingParams` ← KEY OPTIMIZATION!
 - Stream token IDs (not text) back to gRPC client
 - Handle abort/cancel operations
 
-### 2. VllmSchedulerServicer (`vllm/entrypoints/vllm_scheduler_servicer.py`)
+### 2. gRPC Server (`vllm/entrypoints/grpc_server.py`)
 
-Implements the gRPC service interface:
+Single file containing everything:
+- `VllmSchedulerServicer` class (implements 6 RPCs)
+- Main `serve_grpc()` function (no wrapper class needed!)
 
 ```python
 class VllmSchedulerServicer(vllm_scheduler_pb2_grpc.VllmSchedulerServicer):
     async def Generate(self, request, context):
-        # Parse protobuf request
-        # Call request_manager.generate_request()
-        # Yield streaming responses
-```
+        # Parse protobuf, call request_manager.generate(), yield responses
 
-### 3. gRPC Server Entrypoint (`vllm/entrypoints/grpc_server.py`)
+    async def HealthCheck(self, request, context): ...
+    async def Abort(self, request, context): ...
+    # ... other RPCs
 
-Main server that ties everything together:
-
-```python
 async def serve_grpc(args):
-    # Create AsyncLLM engine (normal initialization, no special flags!)
+    # Create AsyncLLM (no special flags!)
     async_llm = AsyncLLM.from_vllm_config(vllm_config=config)
 
-    # Create request manager
-    request_manager = VllmRequestManager(async_llm=async_llm)
+    # Create components
+    request_manager = GrpcRequestManager(async_llm)
+    servicer = VllmSchedulerServicer(request_manager)
 
-    # Create gRPC server and servicer
+    # Create and start gRPC server
     server = grpc.aio.server(...)
-    servicer = VllmSchedulerServicer(request_manager, ...)
-
-    # Start serving
     await server.start()
+
+    # Handle signals and wait for shutdown
+    loop.add_signal_handler(signal.SIGTERM, signal_handler)
+    await stop_event.wait()
 ```
-
-## Comparison with SGLang Protocol
-
-| Aspect | SGLang | vLLM |
-|--------|--------|------|
-| Package | `sglang.grpc.scheduler` | `vllm.grpc.scheduler` |
-| Shared proto | Yes (with SGLang) | No (separate) |
-| Service name | `SglangScheduler` | `VllmScheduler` |
-| ZMQ required | Yes (custom IPC) | No (uses AsyncLLM directly) |
-| Skip detoken | Always (no detokenizer) | `detokenize=False` in SamplingParams |
-| Engine changes | None | None |
-| Complexity | ~1000 lines | ~700 lines (simpler!) |
 
 ## Usage Example
 
