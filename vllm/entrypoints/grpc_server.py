@@ -173,6 +173,8 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
         """
         is_healthy, message = await self.request_manager.health_check()
 
+        logger.info("HealthCheck request: healthy=%s, message=%s", is_healthy, message)
+
         return vllm_engine_pb2.HealthCheckResponse(
             healthy=is_healthy,
             message=message,
