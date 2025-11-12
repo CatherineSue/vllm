@@ -72,35 +72,32 @@ class GrpcRequestManager:
             # Get eos_token_id from tokenizer
             eos_token_id = self.async_llm.processor.input_preprocessor.get_eos_token_id()
 
-            # Clone and update sampling params
-            processed_sampling_params = sampling_params.clone()
-
             # Set max_tokens if None (generate up to max_model_len)
-            if processed_sampling_params.max_tokens is None:
+            if sampling_params.max_tokens is None:
                 seq_len = len(prompt_token_ids)
-                processed_sampling_params.max_tokens = (
+                sampling_params.max_tokens = (
                     self.async_llm.model_config.max_model_len - seq_len
                 )
 
             # Update from generation config (e.g., temperature, top_p defaults)
-            processed_sampling_params.update_from_generation_config(
+            sampling_params.update_from_generation_config(
                 self.async_llm.processor.generation_config_fields, eos_token_id
             )
 
             # Update from tokenizer (e.g., stop_token_ids)
             if self.async_llm.tokenizer is not None:
-                processed_sampling_params.update_from_tokenizer(self.async_llm.tokenizer)
+                sampling_params.update_from_tokenizer(self.async_llm.tokenizer)
 
             # Create RequestOutputCollector for streaming
-            collector = RequestOutputCollector(output_kind=processed_sampling_params.output_kind)
+            collector = RequestOutputCollector(output_kind=sampling_params.output_kind)
             self.rid_to_collector[request_id] = collector
 
-            # Build EngineCoreRequest with processed params and eos_token_id
+            # Build EngineCoreRequest with eos_token_id
             engine_request = EngineCoreRequest(
                 request_id=request_id,
                 prompt_token_ids=prompt_token_ids,
                 mm_features=None,
-                sampling_params=processed_sampling_params,
+                sampling_params=sampling_params,
                 pooling_params=None,
                 eos_token_id=eos_token_id,
                 arrival_time=arrival_time,
@@ -312,7 +309,7 @@ def create_sampling_params_from_proto(
         else 1.0,
         max_tokens=proto_params.max_tokens
         if proto_params.HasField("max_tokens")
-        else 16,
+        else None,
         min_tokens=proto_params.min_tokens if proto_params.min_tokens > 0 else 0,
         stop=stop,
         stop_token_ids=stop_token_ids,
