@@ -169,11 +169,9 @@ class GrpcRequestManager:
             Tuple of (is_healthy, message)
         """
         try:
-            # Check if engine core is alive
-            is_alive = self.async_llm.engine_core.is_alive()
-
-            if not is_alive:
-                return False, "Engine core is not alive"
+            # Check if engine is running and not errored
+            if self.async_llm.errored:
+                return False, "Engine is not alive"
 
             return True, "Healthy"
 
