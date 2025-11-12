@@ -20,6 +20,8 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams, StructuredOu
 from vllm.v1.engine import EngineCoreRequest
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.output_processor import RequestOutputCollector
+from vllm.v1.structured_output.backend_xgrammar import validate_xgrammar_grammar
+from vllm.v1.structured_output.backend_guidance import validate_guidance_grammar
 
 logger = init_logger(__name__)
 
@@ -35,7 +37,7 @@ class GrpcRequestManager:
     - Stream token IDs (not text) back to gRPC clients
     - Handle abort/cancel operations
     """
-
+    
     def __init__(self, async_llm: AsyncLLM):
         """
         Initialize the request manager.
@@ -45,9 +47,9 @@ class GrpcRequestManager:
         """
         self.async_llm = async_llm
         self.rid_to_collector: dict[str, RequestOutputCollector] = {}
-
+        
         logger.info("GrpcRequestManager initialized")
-
+    
     async def generate(
         self,
         request_id: str,
@@ -71,27 +73,43 @@ class GrpcRequestManager:
             # Apply post-tokenization processing (similar to processor.process_inputs)
             # Get eos_token_id from tokenizer
             eos_token_id = self.async_llm.processor.input_preprocessor.get_eos_token_id()
-
+            
             # Set max_tokens if None (generate up to max_model_len)
             if sampling_params.max_tokens is None:
                 seq_len = len(prompt_token_ids)
                 sampling_params.max_tokens = (
                     self.async_llm.model_config.max_model_len - seq_len
                 )
-
+            
             # Update from generation config (e.g., temperature, top_p defaults)
             sampling_params.update_from_generation_config(
                 self.async_llm.processor.generation_config_fields, eos_token_id
             )
-
+            
             # Update from tokenizer (e.g., stop_token_ids)
             if self.async_llm.tokenizer is not None:
                 sampling_params.update_from_tokenizer(self.async_llm.tokenizer)
-
+            
+            # Set structured output backend if needed
+            if sampling_params.structured_outputs is not None:
+                backend = self.async_llm.vllm_config.structured_outputs_config.backend
+                # Resolve "auto" to concrete backend (same logic as processor)
+                if backend == "auto":
+                    try:
+                        validate_xgrammar_grammar(sampling_params)
+                        backend = "xgrammar"
+                    except ValueError:
+                        # Fall back to guidance if xgrammar validation fails
+                        validate_guidance_grammar(sampling_params, tokenizer=None)
+                        backend = "guidance"
+                    sampling_params.structured_outputs._backend_was_auto = True
+                
+                sampling_params.structured_outputs._backend = backend
+            
             # Create RequestOutputCollector for streaming
             collector = RequestOutputCollector(output_kind=sampling_params.output_kind)
             self.rid_to_collector[request_id] = collector
-
+            
             # Build EngineCoreRequest with eos_token_id
             engine_request = EngineCoreRequest(
                 request_id=request_id,
@@ -105,33 +123,33 @@ class GrpcRequestManager:
                 cache_salt=None,
                 data_parallel_rank=None,
             )
-
+            
             # Submit to AsyncLLM - it will call add_request internally
             # and populate our collector
             await self._submit_request(engine_request, collector)
-
+            
             # Stream outputs from collector
             while True:
                 try:
                     output = await collector.get()
                     yield output
-
+                    
                     if output.finished:
                         break
-
+                
                 except asyncio.CancelledError:
                     logger.info("Request %s cancelled by client.", request_id)
                     # Clean up the request in output_processor and engine_core
                     await self.async_llm.abort([request_id])
                     raise  # Re-raise to let gRPC server handle cleanup
-
+        
         except Exception as e:
             logger.error("Error in generate for %s: %s", request_id, e)
             raise
         finally:
             # Cleanup
             self.rid_to_collector.pop(request_id, None)
-
+    
     async def _submit_request(
         self,
         request: EngineCoreRequest,
@@ -160,15 +178,15 @@ class GrpcRequestManager:
                 request_index=0,
                 queue=collector,
             )
-
+            
             # Submit to engine core
             await self.async_llm.engine_core.add_request_async(request)
-
+        
         except Exception as e:
             logger.error("Error submitting request %s: %s", request.request_id, e)
             # Put error in collector
             collector.put(e)
-
+    
     async def abort(self, request_id: str) -> bool:
         """
         Abort a running request.
@@ -182,25 +200,25 @@ class GrpcRequestManager:
         try:
             # Check if request exists
             collector = self.rid_to_collector.get(request_id)
-
+            
             if collector is None:
                 logger.warning("Abort failed: request %s not found.", request_id)
                 return False
-
+            
             # Abort in AsyncLLM (this handles both engine_core and output_processor)
             await self.async_llm.abort([request_id])
-
+            
             # Remove from our tracking
             self.rid_to_collector.pop(request_id, None)
-
+            
             logger.info("Request %s aborted.", request_id)
             return True
-
+        
         except Exception as e:
             logger.error("Error aborting request %s: %s", request_id, e)
             self.rid_to_collector.pop(request_id, None)
             return False
-
+    
     async def health_check(self) -> tuple[bool, str]:
         """
         Check if the engine is healthy.
@@ -212,13 +230,13 @@ class GrpcRequestManager:
             # Check if engine is running and not errored
             if self.async_llm.errored:
                 return False, "Engine is not alive"
-
+            
             return True, "Healthy"
-
+        
         except Exception as e:
             logger.error("Health check error: %s", e)
             return False, f"Error: {e}"
-
+    
     def get_model_config(self) -> dict:
         """
         Get model configuration information.
@@ -227,7 +245,7 @@ class GrpcRequestManager:
             Dictionary with model config details
         """
         model_config = self.async_llm.model_config
-
+        
         return {
             "model_path": model_config.model,
             "is_generation": model_config.runner_type == "generate",
@@ -235,7 +253,7 @@ class GrpcRequestManager:
             "vocab_size": model_config.get_vocab_size(),
             "supports_vision": model_config.is_multimodal_model,
         }
-
+    
     def get_num_unfinished_requests(self) -> int:
         """
         Get the number of currently running requests.
@@ -265,7 +283,7 @@ def create_sampling_params_from_proto(
     stop_token_ids = (
         list(proto_params.stop_token_ids) if proto_params.stop_token_ids else None
     )
-
+    
     # Handle structured outputs constraints
     structured_outputs = None
     constraint_field = proto_params.WhichOneof("constraint")
@@ -288,12 +306,12 @@ def create_sampling_params_from_proto(
             structured_outputs = StructuredOutputsParams(
                 choice=list(proto_params.choice.choices)
             )
-
+    
     # Handle logit_bias
     logit_bias = None
     if proto_params.logit_bias:
         logit_bias = dict(proto_params.logit_bias)
-
+    
     # Create SamplingParams with detokenize=False and output_kind=DELTA
     # detokenize=False: KEY OPTIMIZATION that skips detokenization!
     # output_kind=DELTA: Return only new tokens in each chunk (for streaming)
