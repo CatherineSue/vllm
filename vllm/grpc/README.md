@@ -14,6 +14,7 @@ The vLLM gRPC protocol enables efficient binary communication between the Rust r
 ## Files
 
 **Protocol & Codegen:**
+
 - `vllm_scheduler.proto` - Protocol buffer definition (source)
 - `vllm_scheduler_pb2.py` - Generated protobuf messages (auto-generated)
 - `vllm_scheduler_pb2_grpc.py` - Generated gRPC service (auto-generated)
@@ -21,6 +22,7 @@ The vLLM gRPC protocol enables efficient binary communication between the Rust r
 - `__init__.py` - Module initialization
 
 **Server Implementation:**
+
 - `grpc_request_manager.py` - Request manager (GrpcRequestManager class)
 - `../entrypoints/grpc_server.py` - Server entrypoint (VllmSchedulerServicer + main)
 
@@ -35,6 +37,7 @@ python vllm/grpc/compile_protos.py
 **Requirements**: `pip install grpcio-tools`
 
 This generates:
+
 - `vllm_scheduler_pb2.py` - Message classes
 - `vllm_scheduler_pb2_grpc.py` - Service stubs and servicers
 
@@ -54,7 +57,8 @@ The `VllmScheduler` service provides 6 RPCs:
 ### Key Message Types
 
 **Request Flow:**
-```
+
+```text
 GenerateRequest
   ├─ request_id: str
   ├─ tokenized: TokenizedInput (pre-tokenized by Rust)
@@ -65,7 +69,8 @@ GenerateRequest
 ```
 
 **Response Flow (Streaming):**
-```
+
+```text
 GenerateResponse (stream)
   ├─ GenerateStreamChunk (0..N chunks)
   │   ├─ token_ids: list[uint32]  ← NO TEXT!
@@ -95,6 +100,7 @@ sampling_params = SamplingParams(
 ```
 
 This leverages vLLM's existing infrastructure:
+
 1. `RequestState.from_new_request()` checks `sampling_params.detokenize`
 2. If `False`, passes `tokenizer=None` to `IncrementalDetokenizer`
 3. `IncrementalDetokenizer` returns empty strings
@@ -124,6 +130,7 @@ class GrpcRequestManager:
 ```
 
 **Key responsibilities:**
+
 - Convert protobuf types → vLLM types
 - Set `detokenize=False` in all `SamplingParams` ← KEY OPTIMIZATION!
 - Stream token IDs (not text) back to gRPC client
@@ -132,6 +139,7 @@ class GrpcRequestManager:
 ### 2. gRPC Server (`vllm/entrypoints/grpc_server.py`)
 
 Single file containing everything:
+
 - `VllmSchedulerServicer` class (implements 6 RPCs)
 - Main `serve_grpc()` function (no wrapper class needed!)
 
@@ -208,5 +216,5 @@ async for response in stub.Generate(request):
 ## References
 
 - Design document: `.claude/docs/VLLM_GRPC_IMPLEMENTATION_DESIGN.md`
-- Protobuf guide: https://protobuf.dev/programming-guides/proto3/
-- gRPC Python: https://grpc.io/docs/languages/python/
+- Protobuf guide: <https://protobuf.dev/programming-guides/proto3/>
+- gRPC Python: <https://grpc.io/docs/languages/python/>
