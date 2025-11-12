@@ -124,9 +124,18 @@ class GrpcRequestManager:
         """
         try:
             # Add request to output processor
+            # Use None for prompt since we have pre-tokenized input
+            # TODO: Support sampling_params.n > 1 (parallel sampling)
+            # When n > 1, we need to:
+            # 1. Create a ParentRequest to track all child requests
+            # 2. Fan out multiple child EngineCoreRequests with different request_index values
+            # 3. Aggregate outputs from all children
+            # For now, we only support n=1, so parent_req=None and request_index=0
             self.async_llm.output_processor.add_request(
                 request=request,
-                prompt=request.prompt,
+                prompt=None,
+                parent_req=None,
+                request_index=0,
                 queue=collector,
             )
 
