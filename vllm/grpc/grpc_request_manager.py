@@ -158,21 +158,25 @@ class GrpcRequestManager:
             True if request was found and aborted, False otherwise
         """
         try:
-            # Remove from collectors
-            collector = self.rid_to_collector.pop(request_id, None)
+            # Check if request exists
+            collector = self.rid_to_collector.get(request_id)
 
             if collector is None:
                 logger.warning("Abort failed: request %s not found.", request_id)
                 return False
 
-            # Abort in engine
-            await self.async_llm.engine_core.abort_requests_async([request_id])
+            # Abort in AsyncLLM (this handles both engine_core and output_processor)
+            await self.async_llm.abort([request_id])
+
+            # Remove from our tracking
+            self.rid_to_collector.pop(request_id, None)
 
             logger.info("Request %s aborted.", request_id)
             return True
 
         except Exception as e:
             logger.error("Error aborting request %s: %s", request_id, e)
+            self.rid_to_collector.pop(request_id, None)
             return False
 
     async def health_check(self) -> tuple[bool, str]:
