@@ -385,7 +385,6 @@ async def serve_grpc(args: argparse.Namespace):
     vllm_config = engine_args.create_engine_config()
 
     # Create AsyncLLM
-    # NOTE: No special flags needed! We use detokenize=False in SamplingParams instead
     async_llm = AsyncLLM.from_vllm_config(
         vllm_config=vllm_config,
         usage_context=UsageContext.LLM_CLASS,
