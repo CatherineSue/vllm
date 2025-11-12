@@ -26,6 +26,7 @@ from collections.abc import AsyncGenerator
 import grpc
 
 from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.grpc import vllm_engine_pb2, vllm_engine_pb2_grpc
 from vllm.grpc.grpc_request_manager import (
     GrpcRequestManager,
@@ -381,7 +382,7 @@ async def serve_grpc(args: argparse.Namespace):
     engine_args = AsyncEngineArgs.from_cli_args(args)
 
     # Build vLLM config
-    vllm_config = await engine_args.create_engine_config_async()
+    vllm_config = engine_args.create_engine_config()
 
     # Create AsyncLLM
     # NOTE: No special flags needed! We use detokenize=False in SamplingParams instead
@@ -458,9 +459,8 @@ async def serve_grpc(args: argparse.Namespace):
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
+    parser = FlexibleArgumentParser(
         description="vLLM gRPC Server",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # Server args
