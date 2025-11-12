@@ -27,7 +27,6 @@ import grpc
 from grpc_reflection.v1alpha import reflection
 
 from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.grpc import vllm_engine_pb2, vllm_engine_pb2_grpc
 from vllm.grpc.grpc_request_manager import (
     GrpcRequestManager,
@@ -35,6 +34,7 @@ from vllm.grpc.grpc_request_manager import (
 )
 from vllm.logger import init_logger
 from vllm.usage.usage_lib import UsageContext
+from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.v1.engine.async_llm import AsyncLLM
 
 logger = init_logger(__name__)
@@ -428,7 +428,7 @@ async def serve_grpc(args: argparse.Namespace):
 
     # Enable reflection for grpcurl and other tools
     service_names = (
-        vllm_engine_pb2.DESCRIPTOR.services_by_name['VllmEngine'].full_name,
+        vllm_engine_pb2.DESCRIPTOR.services_by_name["VllmEngine"].full_name,
         reflection.SERVICE_NAME,
     )
     reflection.enable_server_reflection(service_names, server)
