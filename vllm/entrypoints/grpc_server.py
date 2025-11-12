@@ -262,10 +262,11 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
     ) -> vllm_engine_pb2.GenerateResponse:
         """
         Build a streaming chunk response from vLLM output.
+        When output_kind=DELTA, vLLM returns only new tokens automatically.
 
         Args:
             request_id: The request ID
-            output: vLLM RequestOutput
+            output: vLLM RequestOutput (with delta tokens when output_kind=DELTA)
 
         Returns:
             GenerateResponse with chunk field set
@@ -285,7 +286,9 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
                 ),
             )
 
-        # Build chunk with token IDs (no text!)
+        # When output_kind=DELTA, completion.token_ids contains only new tokens
+        # vLLM handles the delta logic internally
+        # completion_tokens = delta count (client will accumulate)
         return vllm_engine_pb2.GenerateResponse(
             request_id=request_id,
             chunk=vllm_engine_pb2.GenerateStreamChunk(
@@ -293,7 +296,7 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
                 prompt_tokens=len(output.prompt_token_ids)
                 if output.prompt_token_ids
                 else 0,
-                completion_tokens=len(completion.token_ids),
+                completion_tokens=len(completion.token_ids),  # Delta count
                 cached_tokens=output.num_cached_tokens,
             ),
         )
@@ -329,7 +332,10 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
                 ),
             )
 
-        # Build complete response with all token IDs
+        # Build complete response
+        # When streaming (DELTA mode): completion.token_ids will be empty/last delta
+        # When non-streaming (CUMULATIVE mode): completion.token_ids has all tokens
+        # Client will accumulate token counts for streaming
         return vllm_engine_pb2.GenerateResponse(
             request_id=request_id,
             complete=vllm_engine_pb2.GenerateComplete(

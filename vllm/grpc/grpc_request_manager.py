@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 
 from vllm.logger import init_logger
 from vllm.outputs import RequestOutput
-from vllm.sampling_params import SamplingParams, StructuredOutputsParams
+from vllm.sampling_params import RequestOutputKind, SamplingParams, StructuredOutputsParams
 from vllm.v1.engine import EngineCoreRequest
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.output_processor import RequestOutputCollector
@@ -268,8 +268,9 @@ def create_sampling_params_from_proto(
     if proto_params.logit_bias:
         logit_bias = dict(proto_params.logit_bias)
 
-    # Create SamplingParams with detokenize=False
-    # This is the KEY optimization that skips detokenization!
+    # Create SamplingParams with detokenize=False and output_kind=DELTA
+    # detokenize=False: KEY OPTIMIZATION that skips detokenization!
+    # output_kind=DELTA: Return only new tokens in each chunk (for streaming)
     return SamplingParams(
         temperature=proto_params.temperature if proto_params.temperature > 0 else 1.0,
         top_p=proto_params.top_p if proto_params.top_p > 0 else 1.0,
@@ -301,5 +302,6 @@ def create_sampling_params_from_proto(
         if proto_params.HasField("truncate_prompt_tokens")
         else None,
         structured_outputs=structured_outputs,
-        detokenize=False,  # ← KEY OPTIMIZATION: Skip detokenization!
+        detokenize=False,
+        output_kind=RequestOutputKind.DELTA if stream else RequestOutputKind.CUMULATIVE,
     )
