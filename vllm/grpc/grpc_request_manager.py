@@ -75,10 +75,15 @@ class GrpcRequestManager:
             # Build EngineCoreRequest
             engine_request = EngineCoreRequest(
                 request_id=request_id,
-                prompt="",  # Empty since we have token IDs
                 prompt_token_ids=prompt_token_ids,
+                mm_features=None,
                 sampling_params=sampling_params,
+                pooling_params=None,
+                eos_token_id=None,
                 arrival_time=arrival_time,
+                lora_request=None,
+                cache_salt=None,
+                data_parallel_rank=None,
             )
 
             # Submit to AsyncLLM - it will call add_request internally
