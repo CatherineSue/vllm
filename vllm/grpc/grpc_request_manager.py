@@ -190,7 +190,7 @@ class GrpcRequestManager:
 
         return {
             "model_path": model_config.model,
-            "is_generation": not model_config.embedding_mode,
+            "is_generation": model_config.runner_type == "generate",
             "max_context_length": model_config.max_model_len,
             "vocab_size": model_config.get_vocab_size(),
             "supports_vision": model_config.is_multimodal_model,
