@@ -20,8 +20,7 @@ from vllm.sampling_params import RequestOutputKind, SamplingParams, StructuredOu
 from vllm.v1.engine import EngineCoreRequest
 from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.engine.output_processor import RequestOutputCollector
-from vllm.v1.structured_output.backend_xgrammar import validate_xgrammar_grammar
-from vllm.v1.structured_output.backend_guidance import validate_guidance_grammar
+from vllm.inputs import TokensPrompt
 
 logger = init_logger(__name__)
 
@@ -70,60 +69,19 @@ class GrpcRequestManager:
             RequestOutput objects containing token IDs (text will be empty)
         """
         try:
-            # Apply post-tokenization processing (similar to processor.process_inputs)
-            # Get eos_token_id from tokenizer
-            eos_token_id = self.async_llm.processor.input_preprocessor.get_eos_token_id()
-            
-            # Set max_tokens if None (generate up to max_model_len)
-            if sampling_params.max_tokens is None:
-                seq_len = len(prompt_token_ids)
-                sampling_params.max_tokens = (
-                    self.async_llm.model_config.max_model_len - seq_len
-                )
-            
-            # Update from generation config (e.g., temperature, top_p defaults)
-            sampling_params.update_from_generation_config(
-                self.async_llm.processor.generation_config_fields, eos_token_id
+            # Use processor.process_inputs() with pre-tokenized input
+            prompt: TokensPrompt = {"prompt_token_ids": prompt_token_ids}
+
+            engine_request = self.async_llm.processor.process_inputs(
+                request_id=request_id,
+                prompt=prompt,
+                params=sampling_params,
+                arrival_time=arrival_time,
             )
-            
-            # Update from tokenizer (e.g., stop_token_ids)
-            if self.async_llm.tokenizer is not None:
-                sampling_params.update_from_tokenizer(self.async_llm.tokenizer)
-            
-            # Set structured output backend if needed
-            if sampling_params.structured_outputs is not None:
-                backend = self.async_llm.vllm_config.structured_outputs_config.backend
-                # Resolve "auto" to concrete backend (same logic as processor)
-                if backend == "auto":
-                    try:
-                        validate_xgrammar_grammar(sampling_params)
-                        backend = "xgrammar"
-                    except ValueError:
-                        # Fall back to guidance if xgrammar validation fails
-                        validate_guidance_grammar(sampling_params, tokenizer=None)
-                        backend = "guidance"
-                    sampling_params.structured_outputs._backend_was_auto = True
-                
-                sampling_params.structured_outputs._backend = backend
-            
-            # Create RequestOutputCollector for streaming
+
             collector = RequestOutputCollector(output_kind=sampling_params.output_kind)
             self.rid_to_collector[request_id] = collector
-            
-            # Build EngineCoreRequest with eos_token_id
-            engine_request = EngineCoreRequest(
-                request_id=request_id,
-                prompt_token_ids=prompt_token_ids,
-                mm_features=None,
-                sampling_params=sampling_params,
-                pooling_params=None,
-                eos_token_id=eos_token_id,
-                arrival_time=arrival_time,
-                lora_request=None,
-                cache_salt=None,
-                data_parallel_rank=None,
-            )
-            
+
             # Submit to AsyncLLM - it will call add_request internally
             # and populate our collector
             await self._submit_request(engine_request, collector)
