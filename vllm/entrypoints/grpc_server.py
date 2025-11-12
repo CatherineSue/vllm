@@ -24,6 +24,7 @@ import time
 from collections.abc import AsyncGenerator
 
 import grpc
+from grpc_reflection.v1alpha import reflection
 
 from vllm.engine.arg_utils import AsyncEngineArgs
 from vllm.utils.argparse_utils import FlexibleArgumentParser
@@ -416,6 +417,13 @@ async def serve_grpc(args: argparse.Namespace):
 
     # Add servicer to server
     vllm_engine_pb2_grpc.add_VllmEngineServicer_to_server(servicer, server)
+
+    # Enable reflection for grpcurl and other tools
+    service_names = (
+        vllm_engine_pb2.DESCRIPTOR.services_by_name['VllmEngine'].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(service_names, server)
 
     # Bind to address
     address = f"{args.host}:{args.port}"
