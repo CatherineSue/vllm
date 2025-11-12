@@ -88,7 +88,7 @@ class GrpcRequestManager:
 
             # Submit to AsyncLLM - it will call add_request internally
             # and populate our collector
-            asyncio.create_task(self._submit_request(engine_request, collector))
+            await self._submit_request(engine_request, collector)
 
             # Stream outputs from collector
             while True:
@@ -101,6 +101,8 @@ class GrpcRequestManager:
 
                 except asyncio.CancelledError:
                     logger.info("Request %s cancelled by client.", request_id)
+                    # Clean up the request in output_processor and engine_core
+                    await self.async_llm.abort([request_id])
                     raise  # Re-raise to let gRPC server handle cleanup
 
         except Exception as e:
