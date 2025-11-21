@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-# mypy: ignore-errors
 """
 vLLM gRPC Server
 
@@ -116,11 +115,12 @@ class VllmEngineServicer(vllm_engine_pb2_grpc.VllmEngineServicer):
                     return
 
                 # Convert vLLM output to protobuf
-                if request.stream and not output.finished:
-                    # Streaming chunk
+                # For streaming, always send chunks
+                if request.stream:
                     yield self._chunk_response(request_id, output)
-                elif output.finished:
-                    # Final response
+
+                # Send complete response when finished
+                if output.finished:
                     yield self._complete_response(request_id, output)
 
         except Exception as e:
