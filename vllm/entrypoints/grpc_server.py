@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# mypy: ignore-errors
 """
 vLLM gRPC Server
 
@@ -392,12 +393,14 @@ async def serve_grpc(args: argparse.Namespace):
     engine_args = AsyncEngineArgs.from_cli_args(args)
 
     # Build vLLM config
-    vllm_config = engine_args.create_engine_config()
+    vllm_config = engine_args.create_engine_config(
+        usage_context=UsageContext.OPENAI_API_SERVER
+    )
 
     # Create AsyncLLM
     async_llm = AsyncLLM.from_vllm_config(
         vllm_config=vllm_config,
-        usage_context=UsageContext.LLM_CLASS,
+        usage_context=UsageContext.OPENAI_API_SERVER,
         enable_log_requests=not args.disable_log_requests_server,
         disable_log_stats=args.disable_log_stats_server,
     )
@@ -417,11 +420,7 @@ async def serve_grpc(args: argparse.Namespace):
         options=[
             ("grpc.max_send_message_length", -1),
             ("grpc.max_receive_message_length", -1),
-            ("grpc.keepalive_time_ms", 10000),
-            ("grpc.keepalive_timeout_ms", 5000),
-            ("grpc.keepalive_permit_without_calls", True),
-            ("grpc.http2.max_pings_without_data", 0),
-        ]
+        ],
     )
 
     # Add servicer to server

@@ -167,7 +167,10 @@ class GrpcRequestManager:
             collector = self.rid_to_collector.get(request_id)
 
             if collector is None:
-                logger.warning("Abort failed: request %s not found.", request_id)
+                logger.debug(
+                    "Abort: request %s not found (may have already completed).",
+                    request_id,
+                )
                 return False
 
             # Abort in AsyncLLM (this handles both engine_core and output_processor)
